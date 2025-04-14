@@ -1,0 +1,90 @@
+---
+
+   ## this role supports vars.d
+  - include_role:
+      name: smabot.base.expand_vardirs
+
+
+  - smabot.sonatype.normalize_nexus_users_manage_args:
+    register: _tmp_nexus_users_cfg
+    no_log: >-
+      {{ (smabot_sonatype_manage_nexus_users_args.hide_secrets
+       | default(True) ) != False }}
+
+  - set_fact:
+      smabot_sonatype_nxusr_manage_args_normed: "{{ _tmp_nexus_users_cfg.normalized }}"
+    no_log: "{{ _tmp_nexus_users_cfg.normalized.hide_secrets }}"
+
+
+  - name: set connection credentials when necessary
+    set_fact:
+      "{{ _iter_cred_vars.key }}": "{{ _iter_cred_vars.value }}"
+    loop: >-
+      {{ smabot_sonatype_nxusr_manage_args_normed.connection._export_vars.ansible
+       | dict2items() }}
+    loop_control:
+      loop_var: _iter_cred_vars
+
+    ## might contain confidential server credentials and user secrets
+    no_log: >-
+      {{ smabot_sonatype_nxusr_manage_args_normed.hide_secrets }}
+
+
+  - name: handle user credentials
+    include_role:
+      name: smabot.utils.credentials_autogen_cycle
+    vars:
+      smabot_utils_credentials_autogen_cycle_args: >-
+        {{ smabot_sonatype_nxusr_manage_args_normed.users._export_cfgs.user_creds }}
+    when: >-
+      (smabot_sonatype_nxusr_manage_args_normed.users._export_cfgs.user_creds
+       | default(False)) is truthy
+
+##  - debug:
+##      var: smabot_utils_credentials_autogen_cycle_result
+
+
+  - set_fact:
+      _tmp_failed_tasks: {}
+
+
+  - name: handle realm users
+    include_tasks: manage_user_realms.yml
+    loop: >-
+      {{ smabot_sonatype_nxusr_manage_args_normed.users.realms | dict2items }}
+    loop_control:
+      loop_var: _iter_user_realms
+      label: "{{ _iter_user_realms.key }}"
+
+
+  - name: handle anonymous access
+    smabot.sonatype.nexus_anonymous_access: >-
+      {{ smabot_sonatype_nxusr_manage_args_normed.users.anonymous_access.config }}
+    when: >-
+      smabot_sonatype_nxusr_manage_args_normed.users.anonymous_access.enabled
+
+
+    ## unset credential containing var for security reasons
+  - set_fact:
+      smabot_utils_credentials_autogen_cycle_result:
+
+
+    ## as these vars might contain highly valuable secrets it is a good
+    ## idea to unset them after they are dont needed anymore
+  - name: unset connection credentials when necessary
+    set_fact:
+      "{{ _iter_cred_vars.key }}":
+    loop: >-
+      {{ smabot_sonatype_nxusr_manage_args_normed.connection._export_vars.ansible
+       | dict2items() }}
+    loop_control:
+      loop_var: _iter_cred_vars
+      label: "{{ _iter_cred_vars.key }}"
+
+
+  - ansible.builtin.fail:
+      msg: |-
+        One or more tasks of this role have failed:
+        {{ _tmp_failed_tasks | to_yaml(indent=2) }}
+    when: _tmp_failed_tasks is truthy
+

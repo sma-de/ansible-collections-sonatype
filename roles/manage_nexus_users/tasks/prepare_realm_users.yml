@@ -1,0 +1,21 @@
+---
+
+  - ansible.builtin.debug:
+      msg: >-
+        password for user '{{ _iter_realm_users.key }}'
+        found, password update possible
+    when: >-
+      (smabot_utils_credentials_autogen_cycle_result[_iter_realm_users.value.id].password
+       | default(False)) is truthy
+
+
+  - ansible.builtin.debug:
+      msg: >-
+        no password for user '{{ _iter_realm_users.key }}'
+        given, password will not be update for this user,
+        if user is new creation will fail as a password is
+        necessary for this operation
+    when: >-
+      (smabot_utils_credentials_autogen_cycle_result[_iter_realm_users.value.id].password
+       | default(False)) is falsy
+

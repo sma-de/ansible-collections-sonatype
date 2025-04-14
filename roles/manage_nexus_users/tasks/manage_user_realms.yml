@@ -1,0 +1,100 @@
+---
+
+  - set_fact:
+      _tmp_nexus_users_cfg:
+      _tmp_failed_tasks_realm: []
+
+
+  - block:
+
+      - include_tasks: prepare_realm_users.yml
+        loop: >-
+          {{ _iter_user_realms.value.users | dict2items }}
+        loop_control:
+          loop_var: _iter_realm_users
+          label: "{{ _iter_realm_users.key }}"
+
+
+      - name: finalize nexus user module config
+        set_fact:
+          _tmp_modconfig: >-
+            {{ _iter_user_realms.value._export_cfgs.manage_users
+             | smabot.sonatype.combine_user_cfg(password_map=(
+                 smabot_utils_credentials_autogen_cycle_result | default(None)
+               )
+             ) }}
+        no_log: >-
+          {{ smabot_sonatype_nxusr_manage_args_normed.hide_secrets }}
+
+
+      - name: manage nexus users for realm '{{ _iter_user_realms.value.id }}'
+        smabot.sonatype.nexus_manage_users: >-
+          {{ _tmp_modconfig }}
+        register: _tmp_nexus_users_cfg
+
+
+      - name: update used auth user password when necessary
+        set_fact:
+          auth_pw_sonanexus: >-
+            {{ _tmp_modconfig.users[_tmp_nexus_users_cfg.users.current_auth_user.id].password }}
+        when: >-
+          (_tmp_nexus_users_cfg.users.current_auth_user | default(False)) is truthy
+          and (auth_pw_sonanexus | default(False)) is truthy
+          and _tmp_nexus_users_cfg.users.get('auth_user_pw_change', False)
+        no_log: >-
+          {{ smabot_sonatype_nxusr_manage_args_normed.hide_secrets }}
+
+
+    rescue:
+
+      - set_fact:
+          _tmp_failed_tasks_realm: >-
+            {{ _tmp_failed_tasks_realm + [(ansible_failed_task
+                 | smabot.base.subdict(keys_remove=['args']))]
+            }}
+
+
+      ##
+      ## if nexus_manage_users module registered something on its outvar,
+      ## use its content to filter out potential successfully changed users
+      ##
+      - name: >-
+          optionally filter credential undo config to only undo cred
+          updates for failed users only
+        set_fact:
+          smabot_utils_credentials_autogen_cycle_return_reversable_cfg: >-
+            {{ smabot_utils_credentials_autogen_cycle_return_reversable_cfg
+             | smabot.utils.filter_undo_secrets(keep_keys=(
+                 _tmp_nexus_users_cfg.users.by_change.failed.keys() | list))
+            }}
+        no_log: >-
+          {{ smabot_sonatype_nxusr_manage_args_normed.hide_secrets }}
+        when: >-
+          _tmp_nexus_users_cfg is truthy
+
+
+      ##
+      ## undo potential backend credential storage changes
+      ## for failed user updates
+      ##
+      - name: revert failed credential updates
+        include_role:
+          name: smabot.utils.credentials_autogen_cycle_undo
+        when: >-
+          (smabot_sonatype_nxusr_manage_args_normed.users._export_cfgs.user_creds
+           | default(False)) is truthy
+
+
+  - set_fact:
+      _tmp_modconfig:
+      _tmp_nexus_users_cfg:
+
+
+  - set_fact:
+      _tmp_failed_tasks: >-
+        {{ _tmp_failed_tasks | combine({
+             _iter_user_realms.value.id: _tmp_failed_tasks_realm})
+        }}
+    when: >-
+      _tmp_failed_tasks_realm is truthy
+
