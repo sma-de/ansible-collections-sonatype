@@ -460,7 +460,7 @@ class ActionModule(NexusBase):
             for k, v in existing_users.items():
                 state_unchanged_users.pop(v['id'], None)
 
-                ex_usr['remove_reason'] = 'exclusive_mode'
+                v['remove_reason'] = 'exclusive_mode'
                 absent_users[k] = v
 
         ## remove users which should be removed
