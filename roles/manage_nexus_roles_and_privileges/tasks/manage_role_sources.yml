@@ -1,0 +1,6 @@
+---
+
+  - name: handle server roles
+    smabot.sonatype.nexus_manage_roles: >-
+      {{ _iter_role_sources.value._export_cfgs.manage_roles }}
+

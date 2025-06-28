@@ -21,13 +21,24 @@
       "{{ _iter_cred_vars.key }}": "{{ _iter_cred_vars.value }}"
     loop: >-
       {{ smabot_sonatype_nxusr_manage_args_normed.connection._export_vars.ansible
-       | dict2items() }}
+       | default({}, True) | dict2items() }}
     loop_control:
       loop_var: _iter_cred_vars
 
     ## might contain confidential server credentials and user secrets
     no_log: >-
       {{ smabot_sonatype_nxusr_manage_args_normed.hide_secrets }}
+
+
+  - name: optionally handle user special defined roles
+    include_role:
+      name: smabot.sonatype.manage_nexus_roles_and_privileges
+    vars:
+      smabot_sonatype_manage_nexus_roles_and_privileges_args: >-
+        {{ smabot_sonatype_nxusr_manage_args_normed.users._export_cfgs.user_roles }}
+    when: >-
+      (smabot_sonatype_nxusr_manage_args_normed.users._export_cfgs.user_roles
+       | default(False)) is truthy
 
 
   - name: handle user credentials
@@ -76,7 +87,7 @@
       "{{ _iter_cred_vars.key }}":
     loop: >-
       {{ smabot_sonatype_nxusr_manage_args_normed.connection._export_vars.ansible
-       | dict2items() }}
+       | default({}, True) | dict2items() }}
     loop_control:
       loop_var: _iter_cred_vars
       label: "{{ _iter_cred_vars.key }}"

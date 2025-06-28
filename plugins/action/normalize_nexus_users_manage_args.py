@@ -34,11 +34,22 @@ class NexusUserManageNormalizer(NormalizerBase):
 
         subnorms = kwargs.setdefault('sub_normalizers', [])
         subnorms += [
-          SecureConnectionNormer(pluginref, srvtype_default='sonanexus'),
+          (ConnectionNormer, True),
           NormUsers(pluginref),
         ]
 
         super(NexusUserManageNormalizer, self).__init__(pluginref, *args, **kwargs)
+
+
+class ConnectionNormer(SecureConnectionNormer):
+
+    NORMER_CONFIG_PATH = ['connection']
+
+    def __init__(self, pluginref, *args, **kwargs):
+        super(ConnectionNormer, self).__init__(pluginref, *args,
+            srvtype_default='sonanexus',
+            config_path=self.NORMER_CONFIG_PATH, **kwargs
+        )
 
 
 class NormUsers(NormalizerBase):
@@ -61,14 +72,20 @@ class NormUsers(NormalizerBase):
         exp_configs = {}
         my_subcfg['_export_cfgs'] = exp_configs
 
-        ## prepare use cred handling subconfig
+        ## prepare use cred handling subconfig and optional
+        ## user role generation
         user_creds = {}
         exp_configs['user_creds'] = user_creds
+
+        user_roles = {}
 
         tmp = {}
 
         for kr, vr in my_subcfg['realms'].items():
+            realm_roles = {}
+
             for ku, vu in vr['users'].items():
+                ## handle creds stuff
                 pw_opts = vu.get('credentials', {}).get('password', {})
 
                 if pw_opts.get('enabled', False):
@@ -87,10 +104,24 @@ class NormUsers(NormalizerBase):
 
                     tmp[vu['id']] = pw_opts
 
+                ## handle roles stuff
+                rdef = vu.get('role_def', None)
+
+                if rdef:
+                    realm_roles[rdef['id']] = rdef
+
+            if realm_roles:
+                user_roles[kr] = {'roles': realm_roles}
+
         if tmp:
             user_creds['passwords'] = {
               'pw_defaults': {'reversable': True},
               'passwords': tmp,
+            }
+
+        if user_roles:
+            exp_configs['user_roles'] = {
+              'roles': {'sources': user_roles}
             }
 
         return my_subcfg
@@ -219,6 +250,19 @@ class NormRealmUserInst(NormalizerNamed):
     def name_key(self):
         return 'id'
 
+    def _handle_specifics_presub(self, cfg, my_subcfg, cfgpath_abs):
+        rdef = my_subcfg.get('role_def', None)
+
+        if rdef:
+            ## default role-id from user id
+            rid = setdefault_none(rdef, 'id', my_subcfg['id'].replace('_', '-'))
+
+            ## auto-add user special role to roles of user
+            roles = setdefault_none(my_subcfg, 'roles', {})
+            roles[rid] = None
+
+        return my_subcfg
+
 
 class NormUserRoleX(NormalizerNamed):
 
@@ -252,26 +296,6 @@ class NormUserConfig(NormalizerBase):
             roles.append(v['name'])
 
         my_subcfg['roles'] = roles
-
-        ##upw_cfg = pcfg.get('credentials', {}).get(
-        ##   'password', {}
-        ##)
-
-        ##if upw_cfg['enabled']:
-        ##    upw = upw_cfg.get('value', None)
-
-        ##    if upw:
-        ##        cfg_pw = my_subcfg.get('password', None)
-
-        ##        ansible_assert(not cfg_pw,
-        ##           "bad user cfg for user '{}', either give user password as"\
-        ##           " '<user-id>.config.password' or as"\
-        ##           " '<user-id>.credential.password' but never both at the"\
-        ##           " same time".format(my_subcfg['id'])
-        ##        )
-
-        ##        my_subcfg['password'] = upw
-
         return my_subcfg
 
 

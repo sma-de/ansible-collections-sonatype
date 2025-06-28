@@ -330,7 +330,21 @@ class NexusBase(BaseAction):
             for k, v in self.nexus_key_mappings_users.items():
                 u[v] = u.pop(k)
 
-        if len(res) == 1:
+        if single and len(res) == 1:
+            res = res[next(iter(res))]
+
+        return res
+
+
+    def postfix_role_res(self, roles, single=False):
+        if not isinstance(roles, list):
+            roles = [roles]
+
+        res = {}
+        for r in roles:
+            res[r['id']] = r
+
+        if single and len(res) == 1:
             res = res[next(iter(res))]
 
         return res
@@ -481,4 +495,38 @@ class NexusBase(BaseAction):
         )
 
         return tmp['json']
+
+
+    def get_nexus_roles(self, source=None, **kwargs):
+        path_opts = {}
+
+        if source:
+            path_opts['source'] = source
+
+        tmp = self.query_nexus_restapi('security/roles',
+            url_query=path_opts, **kwargs
+        )
+
+        return self.postfix_role_res(tmp['json'])
+
+
+    def create_nexus_role(self, role_cfg, source=None, **kwargs):
+        tmp = self.query_nexus_restapi('security/roles',
+            body=role_cfg, **kwargs
+        )
+
+        return self.postfix_role_res(tmp['json'], single=True)
+
+
+    def update_nexus_role(self, role_cfg, source=None, **kwargs):
+        self.query_nexus_restapi(
+            'security/roles/{}'.format(role_cfg['id']), body=role_cfg,
+            method='PUT', status_code=[200, 204], **kwargs
+        )
+
+
+    def remove_nexus_role(self, role_id, source=None, **kwargs):
+        self.query_nexus_restapi('security/roles/{}'.format(role_id),
+           method='DELETE', status_code=[200, 204], **kwargs
+        )
 

@@ -32,19 +32,6 @@
           {{ _tmp_modconfig }}
         register: _tmp_nexus_users_cfg
 
-
-      - name: update used auth user password when necessary
-        set_fact:
-          auth_pw_sonanexus: >-
-            {{ _tmp_modconfig.users[_tmp_nexus_users_cfg.users.current_auth_user.id].password }}
-        when: >-
-          (_tmp_nexus_users_cfg.users.current_auth_user | default(False)) is truthy
-          and (auth_pw_sonanexus | default(False)) is truthy
-          and _tmp_nexus_users_cfg.users.get('auth_user_pw_change', False)
-        no_log: >-
-          {{ smabot_sonatype_nxusr_manage_args_normed.hide_secrets }}
-
-
     rescue:
 
       - set_fact:
@@ -83,6 +70,20 @@
         when: >-
           (smabot_sonatype_nxusr_manage_args_normed.users._export_cfgs.user_creds
            | default(False)) is truthy
+
+    always:
+
+      - name: update used auth user password when necessary
+        set_fact:
+          auth_pw_sonanexus: >-
+            {{ _tmp_modconfig.users[_tmp_nexus_users_cfg.users.current_auth_user.id].password }}
+        when: >-
+          (_tmp_nexus_users_cfg.users.current_auth_user | default(False)) is truthy
+          and (auth_pw_sonanexus | default(False)) is truthy
+          and _tmp_nexus_users_cfg.users.get('auth_user_pw_change', False)
+          and _tmp_nexus_users_cfg.users.current_auth_user.change_state != 'failed'
+        no_log: >-
+          {{ smabot_sonatype_nxusr_manage_args_normed.hide_secrets }}
 
 
   - set_fact:

@@ -1,0 +1,54 @@
+---
+
+   ## this role supports vars.d
+  - include_role:
+      name: smabot.base.expand_vardirs
+
+
+  - smabot.sonatype.normalize_nexus_roles_and_privileges_manage_args:
+    register: _tmp_nexus_roles_cfg
+    no_log: >-
+      {{ (smabot_sonatype_manage_nexus_roles_and_privileges_args.hide_secrets
+       | default(True) ) != False }}
+
+  - set_fact:
+      smabot_sonatype_manage_nexus_roles_and_privileges_args_normed: "{{ _tmp_nexus_roles_cfg.normalized }}"
+    no_log: "{{ _tmp_nexus_roles_cfg.normalized.hide_secrets }}"
+
+
+  - name: set connection credentials when necessary
+    set_fact:
+      "{{ _iter_cred_vars.key }}": "{{ _iter_cred_vars.value }}"
+    loop: >-
+      {{ smabot_sonatype_manage_nexus_roles_and_privileges_args_normed.connection._export_vars.ansible
+       | default({}, True) | dict2items() }}
+    loop_control:
+      loop_var: _iter_cred_vars
+
+    ## might contain confidential server credentials and user secrets
+    no_log: >-
+      {{ smabot_sonatype_manage_nexus_roles_and_privileges_args_normed.hide_secrets }}
+
+
+  - name: handle role sources
+    include_tasks: manage_role_sources.yml
+    loop: >-
+      {{ smabot_sonatype_manage_nexus_roles_and_privileges_args_normed.roles.sources
+       | dict2items }}
+    loop_control:
+      loop_var: _iter_role_sources
+      label: "{{ _iter_role_sources.key }}"
+
+
+    ## as these vars might contain highly valuable secrets it is a good
+    ## idea to unset them after they are dont needed anymore
+  - name: unset connection credentials when necessary
+    set_fact:
+      "{{ _iter_cred_vars.key }}":
+    loop: >-
+      {{ smabot_sonatype_manage_nexus_roles_and_privileges_args_normed.connection._export_vars.ansible
+       | default({}, True) | dict2items() }}
+    loop_control:
+      loop_var: _iter_cred_vars
+      label: "{{ _iter_cred_vars.key }}"
+
