@@ -414,8 +414,8 @@ class ActionModule(NexusBase):
                 tmp['error_type'] = str(type(e))
                 tmp['error_msg'] = str(e)
 
-                state_failed_roles[ex_role['id']] = tmp
-                state_by_name[ex_role['id']] = tmp
+                state_failed_roles[tmp['id']] = tmp
+                state_by_name[tmp['id']] = tmp
 
         if exclusive and existing_roles:
             ## in exclusive mode also kill all roles not
