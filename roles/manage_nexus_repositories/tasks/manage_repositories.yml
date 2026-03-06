@@ -1,0 +1,8 @@
+---
+
+  - name: >-
+      handle nexus repositories
+      ({{ _iter_repos.value.repo_format }}|{{_iter_repos.value.repo_type}})
+    smabot.sonatype.nexus_manage_repositories: >-
+      {{ _iter_repos.value }}
+

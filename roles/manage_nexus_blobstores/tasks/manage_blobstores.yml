@@ -1,0 +1,11 @@
+---
+
+  - name: handle nexus blobstores of type '{{ _iter_blobstore.value.store_type }}'
+    smabot.sonatype.nexus_manage_blobstores: >-
+      {{ _iter_blobstore.value }}
+
+    ## at least for some type of blobstores (like s3)
+    ## input config might contain secrets
+    no_log: >-
+     {{ smabot_sonatype_manage_nexus_blobstore_args_normed.hide_secrets }}
+

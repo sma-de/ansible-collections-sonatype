@@ -131,15 +131,43 @@ class ActionModule(NexusBase):
         return cfg_usr_fwd
 
 
+    def _add_to_admins(self, cfg_usr):
+        upw = cfg_usr.get('password', None)
+
+        if not upw:
+            # we dont have valid pw for user, so cannot be admin
+            return
+
+        if 'nx-admin' not in (cfg_usr.get('roles', None) or []):
+            # user does not have admin permissions on
+            # server => cannot be admin
+            return
+
+        self._valid_admins[cfg_usr['id']] = cfg_usr
+
+
+    def _change_admin_user(self, reason):
+        ansible_assert(self._valid_admins,
+           "changing currently used admin config credentials for nexus"\
+           " because {} is not possible because given config does not"\
+           " contain any other user (and password) with the"\
+           " necessary rights".format(reason)
+        )
+
+        ## any of the pontential candidates should be fine,
+        ## so just pick the first one
+        na = next(iter(self._valid_admins.values()))
+
+        self._api_usr_override = na['id']
+        self._api_pw_override = na['password']
+        self._admin_usr_changed = True
+
+
     def _create_user(self, cfg_usr, realm, state_new_users, state_by_name):
         uid = cfg_usr['id']
+        upw = cfg_usr.get('password', None)
 
         if realm != 'default':
-            pw = cfg_usr.get('password', None)
-
-            if pw:
-                cfg_usr['password'] = '<redacted>'
-
             raise AnsibleOptionsError(
                 "Cannot handle user '{}' for realm '{}'. It seems not to"\
                 " exist and creating new users is only allowed for nexus"\
@@ -158,8 +186,6 @@ class ActionModule(NexusBase):
 
         cfg_usr_up = self._handle_user_mailcfg(uid, cfg_usr)
 
-        upw = cfg_usr.get('password', None)
-
         if not upw:
             raise AnsibleOptionsError(
                "Cannot create new user '{}', mandatory key 'password'"\
@@ -167,6 +193,10 @@ class ActionModule(NexusBase):
                   self._prepare_usrcfg_for_print(cfg_usr)
                )
             )
+
+        ## drop custom module update keys obviously not updateable by api
+        for k in ['mail', 'force']:
+            cfg_usr_up.pop(k, None)
 
         res = self.create_nexus_builtin_user(cfg_usr_up)
 
@@ -178,7 +208,7 @@ class ActionModule(NexusBase):
         )
 
         res['created_new'] = True
-        cfg_usr['change_state'] = 'created'
+        res['change_state'] = 'created'
         state_new_users[uid] = res
         state_by_name[uid] = res
 
@@ -186,7 +216,7 @@ class ActionModule(NexusBase):
     def _delete_user(self, cfg_usr, realm,
         state_removed_users, state_by_name
     ):
-        fdel = cfg_usr.get('force_delete', False)
+        fdel = cfg_usr.get('force', False)
 
         if cfg_usr['id'] == self.nexus_auth_user:
             if not fdel:
@@ -194,11 +224,13 @@ class ActionModule(NexusBase):
                    "Trying to remove nexus user '{}' which is also"\
                    " currently used for api access to the server, this"\
                    " seems dangerous. If you are really sure you want to"\
-                   " do this set the optional 'force_delete' field true"\
-                   "for this user:\n{}".format(cfg_usr['id'],
+                   " do this set the optional 'force' field true"\
+                   " for this user:\n{}".format(cfg_usr['id'],
                       self._prepare_usrcfg_for_print(cfg_usr)
                    )
                 )
+
+            self._change_admin_user("current admin user will be deleted")
 
         self.remove_nexus_user(cfg_usr['id'], realm)
 
@@ -209,10 +241,29 @@ class ActionModule(NexusBase):
 
 
     def _update_usr(self, cfg_usr, realm,
-        state_updated_users, state_by_name
+        state_updated_users, state_by_name,
     ):
         cfg_usr = copy.deepcopy(cfg_usr)
         uid = cfg_usr['id']
+
+        force = cfg_usr.get('force', False)
+
+        usr_disable = cfg_usr.get('status', '') == 'disabled'
+        cur_admin_disable = usr_disable and uid == self.nexus_auth_user
+
+        if cur_admin_disable:
+            if not force:
+                raise AnsibleOptionsError(
+                   "Trying to disable nexus user '{}' which is also"\
+                   " currently used for api access to the server, this"\
+                   " seems dangerous. If you are really sure you want to"\
+                   " do this set the optional 'force' field true"\
+                   " for this user:\n{}".format(uid,
+                      self._prepare_usrcfg_for_print(cfg_usr)
+                   )
+                )
+
+            self._change_admin_user("current admin user will be disabled")
 
         res = {}
         res.update(state_updated_users[uid])
@@ -251,8 +302,8 @@ class ActionModule(NexusBase):
 
             if not pw_only:
                 ## drop custom module update keys obviously not updateable by api
-                for k in ['mail']:
-                    cfg_usr.pop(k)
+                for k in ['mail', 'force']:
+                    cfg_usr.pop(k, None)
 
                 self.update_nexus_user(cfg_usr, realm)
 
@@ -301,7 +352,7 @@ class ActionModule(NexusBase):
                 ## password not directly comparable and already handled
                 continue
 
-            if k in ['mail']:
+            if k in ['mail', 'force']:
                 ## special module custom keys, not comparable
                 continue
 
@@ -364,9 +415,14 @@ class ActionModule(NexusBase):
         state_removed_users = {}
         state_failed_users = {}
 
+        self._admin_usr_changed = False
+        self._valid_admins = {}
+
+        late_update_users = {}
         absent_users = {}
 
-        ## loop through existing users + user mapping parameter and determine per user: create/update/nochange/delete
+        ## loop through existing users + user mapping parameter and
+        ## determine per user: create/update/nochange/delete
         for uk, uv in cfg_users.items():
             display.vv(
                "NEXUS_MANAGE_USER :: handle config user '{}' ...".format(uk)
@@ -388,9 +444,10 @@ class ActionModule(NexusBase):
                         )
 
                         self._create_user(uv, realm,
-                            state_new_users, state_by_name
+                            state_new_users, state_by_name,
                         )
 
+                        self._add_to_admins(uv)
                         continue
 
                     ## ## these keys are defined here by us for various
@@ -410,10 +467,23 @@ class ActionModule(NexusBase):
                            " config differs, update them"
                         )
 
-                        self._update_usr(uv, realm,
-                            state_updated_users, state_by_name
-                        )
+                        if uv.get('status', '') != 'disabled':
+                            self._update_usr(uv, realm,
+                                state_updated_users, state_by_name
+                            )
 
+                            self._add_to_admins(uv)
+                            continue
+
+                        ##
+                        ## note: in most cases directly updating users
+                        ##   here would be unproblematic, but there are
+                        ##   some edge cases like switching to a new admin
+                        ##   user while disabling the old one which make
+                        ##   it necessary to delay user updates after
+                        ##   all new user creations are through
+                        ##
+                        late_update_users[uk] = (uv, ex_usr)
                         continue
 
                     ex_usr['unchanged'] = True
@@ -426,6 +496,30 @@ class ActionModule(NexusBase):
                 if ex_usr:
                     ex_usr['remove_reason'] = 'explicitly_absented'
                     absent_users[uk] = ex_usr
+
+            except Exception as e:
+                tmp = getattr(e, 'fail_details', None)
+
+                if not tmp:
+                    tmp = ex_usr or {'id': uv['id']}
+
+                tmp['failed'] = True
+                tmp['change_state'] = 'failed'
+
+                tmp['error_type'] = str(type(e))
+                tmp['error_msg'] = str(e)
+
+                state_failed_users[ex_usr['id']] = tmp
+                state_by_name[ex_usr['id']] = tmp
+
+        ## execute delayed user updates now
+        for uk, ux in late_update_users.items():
+            uv, ex_usr = ux
+
+            try:
+                self._update_usr(uv, realm,
+                    state_updated_users, state_by_name
+                )
 
             except Exception as e:
                 tmp = getattr(e, 'fail_details', None)
@@ -473,6 +567,7 @@ class ActionModule(NexusBase):
                 self._delete_user(uv, realm,
                     state_removed_users, state_by_name
                 )
+
             except Exception as e:
                 tmp = getattr(e, 'fail_details', None)
 
@@ -490,15 +585,15 @@ class ActionModule(NexusBase):
 
         ## export final state / changes of this call
         auth_user = None
-        auth_user_pw_change = False
+        auth_user_change = False
 
         for k, v in state_by_name.items():
             if v['id'] == self.nexus_auth_user:
                 v['current_auth_user'] = True
                 auth_user = v
 
-                if v.get('changed_password', False):
-                    auth_user_pw_change = True
+                if v.get('changed_password', False) or self._admin_usr_changed:
+                    auth_user_change = True
 
         result['users'] = {
           'by_change': {
@@ -514,7 +609,7 @@ class ActionModule(NexusBase):
 
         if auth_user:
             result['users']['current_auth_user'] = auth_user
-            result['users']['auth_user_pw_change'] = auth_user_pw_change
+            result['users']['auth_user_change'] = auth_user_change
 
         if state_failed_users:
             result['failed'] = True

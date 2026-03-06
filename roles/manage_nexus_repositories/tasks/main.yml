@@ -4,43 +4,45 @@
   - include_role:
       name: smabot.base.expand_vardirs
     when: >-
-      not (smabot_sonatype_manage_nexus_roles_and_privileges_args.skip_vardir_expand
+      not (smabot_sonatype_manage_nexus_blobstore_args.skip_vardir_expand
       | default(False) )
 
 
-  - smabot.sonatype.normalize_nexus_roles_and_privileges_manage_args:
-    register: _tmp_nexus_roles_cfg
+  - smabot.sonatype.normalize_nexus_repository_manage_args:
+    register: _tmp_nexus_cfg
     no_log: >-
-      {{ (smabot_sonatype_manage_nexus_roles_and_privileges_args.hide_secrets
+      {{ (smabot_sonatype_manage_nexus_repository_args.hide_secrets
        | default(True) ) != False }}
 
   - set_fact:
-      smabot_sonatype_manage_nexus_roles_and_privileges_args_normed: "{{ _tmp_nexus_roles_cfg.normalized }}"
-    no_log: "{{ _tmp_nexus_roles_cfg.normalized.hide_secrets }}"
+      smabot_sonatype_manage_nexus_repository_args_normed: >-
+        {{ _tmp_nexus_cfg.normalized }}
+    no_log: "{{ _tmp_nexus_cfg.normalized.hide_secrets }}"
 
 
   - name: set connection credentials when necessary
     set_fact:
       "{{ _iter_cred_vars.key }}": "{{ _iter_cred_vars.value }}"
     loop: >-
-      {{ smabot_sonatype_manage_nexus_roles_and_privileges_args_normed.connection._export_vars.ansible
+      {{ smabot_sonatype_manage_nexus_repository_args_normed.connection._export_vars.ansible
        | default({}, True) | dict2items() }}
     loop_control:
       loop_var: _iter_cred_vars
 
     ## might contain confidential server credentials and user secrets
     no_log: >-
-      {{ smabot_sonatype_manage_nexus_roles_and_privileges_args_normed.hide_secrets }}
+      {{ smabot_sonatype_manage_nexus_repository_args_normed.hide_secrets }}
 
 
-  - name: handle role sources
-    include_tasks: manage_role_sources.yml
+    ## manage repositories by type and variant
+  - name: handle repositories
+    include_tasks: manage_repositories.yml
     loop: >-
-      {{ smabot_sonatype_manage_nexus_roles_and_privileges_args_normed.roles.sources
+      {{ smabot_sonatype_manage_nexus_repository_args_normed.repositories._export_cfgs.repo_manage
        | dict2items }}
     loop_control:
-      loop_var: _iter_role_sources
-      label: "{{ _iter_role_sources.key }}"
+      loop_var: _iter_repos
+      label: "{{ _iter_repos.key }}"
 
 
     ## as these vars might contain highly valuable secrets it is a good
@@ -49,7 +51,7 @@
     set_fact:
       "{{ _iter_cred_vars.key }}":
     loop: >-
-      {{ smabot_sonatype_manage_nexus_roles_and_privileges_args_normed.connection._export_vars.ansible
+      {{ smabot_sonatype_manage_nexus_repository_args_normed.connection._export_vars.ansible
        | default({}, True) | dict2items() }}
     loop_control:
       loop_var: _iter_cred_vars

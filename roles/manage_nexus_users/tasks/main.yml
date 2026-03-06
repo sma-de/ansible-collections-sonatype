@@ -3,6 +3,9 @@
    ## this role supports vars.d
   - include_role:
       name: smabot.base.expand_vardirs
+    when: >-
+      not (smabot_sonatype_manage_nexus_users_args.skip_vardir_expand
+      | default(False) )
 
 
   - smabot.sonatype.normalize_nexus_users_manage_args:

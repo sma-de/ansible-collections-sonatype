@@ -1,0 +1,57 @@
+---
+
+  - block:
+
+      - set_fact:
+          _tmp_test_creds_handled: false
+          _tmp_cur_test_creds:
+        delegate_to: localhost
+        become: no
+
+
+      - include_tasks: "get_creds_methods/{{ _iter_nx_auth_creds.type }}/main.yml"
+
+
+      - name: ensure given creds get method is supported
+        ansible.builtin.assert:
+          that:
+            - _tmp_test_creds_handled is truthy
+          fail_msg: >-
+            Unsupported credential get method '{{ _iter_nx_auth_creds.type }}'
+        delegate_to: localhost
+        become: no
+
+
+      - block:
+
+          - name: >-
+              check if current test creds with id '{{ _iter_nx_auth_creds.mapkey }}' are valid
+            smabot.sonatype.nexus_check_auth_creds:
+              check_default_creds: false
+
+              ## mapping of credentials to test, optional, if not set,
+              ## just checks if current auth creds avaible by
+              ## "environment" are valid
+              test_creds:
+                cur_test_creds:
+                  user: "{{ _tmp_cur_test_creds.user }}"
+                  password: "{{ _tmp_cur_test_creds.password }}"
+
+            ignore_errors: true
+            no_log: >-
+              {{ smabot_sonatype_nx_check_login_args_normed.hide_secrets }}
+            register: _tmp_nx_creds_check_cur
+
+
+          - set_fact:
+              _tmp_break_loop: true
+              _tmp_nx_creds_check: "{{ _tmp_nx_creds_check_cur }}"
+            when: >-
+              (_tmp_nx_creds_check_cur.valid_creds | default(False)) is truthy
+
+        delegate_to: localhost
+        become: no
+        when: _tmp_cur_test_creds is truthy
+
+    when: not _tmp_break_loop
+

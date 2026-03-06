@@ -73,14 +73,21 @@
 
     always:
 
-      - name: update used auth user password when necessary
+      - name: update used auth user credentials when necessary
         set_fact:
+          auth_user_sonanexus: >-
+            {{ _tmp_nexus_users_cfg.users.current_auth_user.id }}
+
+          ## note: pw as high value secret is never returned by
+          ##   nexus-user-management module, so we need read it
+          ##   from the module input config which obviously must contain it
           auth_pw_sonanexus: >-
             {{ _tmp_modconfig.users[_tmp_nexus_users_cfg.users.current_auth_user.id].password }}
+
         when: >-
           (_tmp_nexus_users_cfg.users.current_auth_user | default(False)) is truthy
           and (auth_pw_sonanexus | default(False)) is truthy
-          and _tmp_nexus_users_cfg.users.get('auth_user_pw_change', False)
+          and _tmp_nexus_users_cfg.users.get('auth_user_change', False)
           and _tmp_nexus_users_cfg.users.current_auth_user.change_state != 'failed'
         no_log: >-
           {{ smabot_sonatype_nxusr_manage_args_normed.hide_secrets }}

@@ -1,0 +1,10 @@
+---
+
+  - name: >-
+      handle nexus cleanup policies
+    smabot.sonatype.nexus_manage_cleanup_policies: >-
+      {{ smabot_sonatype_manage_nexus_cleanup_policy_args_normed.cleanup_policies._export_cfgs.policy_manage }}
+    when: >-
+      smabot_sonatype_manage_nexus_cleanup_policy_args_normed.cleanup_policies._export_cfgs.policy_manage
+      is truthy
+

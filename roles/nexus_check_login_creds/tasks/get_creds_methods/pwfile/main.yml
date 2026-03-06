@@ -1,0 +1,179 @@
+---
+
+## TODO: potential extension: get from url???
+
+  - block:
+
+      - set_fact:
+          _tmp_test_creds_handled: true
+        delegate_to: localhost
+        become: no
+
+
+      - name: read current test cred password from docker container file
+        community.docker.docker_container_exec:
+          container: "{{ _iter_nx_auth_creds.docker.container }}"
+          argv:
+            - cat
+            - "{{ _iter_nx_auth_creds.path }}"
+        register: _tmp_pwfile_read
+        changed_when: false
+        ignore_errors: >-
+          {{ _iter_nx_auth_creds.optional }}
+        no_log: >-
+          {{ smabot_sonatype_nx_check_login_args_normed.hide_secrets }}
+
+
+      - set_fact:
+          _tmp_cur_test_creds:
+            user: "{{ _iter_nx_auth_creds.user }}"
+            password: >-
+              {{ _tmp_pwfile_read.stdout }}
+
+          ## clear secrets containing tmp vars
+          _tmp_pwfile_read:
+
+        delegate_to: localhost
+        become: no
+
+        when: >-
+          not (_tmp_pwfile_read.failed | default(False, True))
+        no_log: >-
+          {{ smabot_sonatype_nx_check_login_args_normed.hide_secrets }}
+
+    when: >-
+      (_iter_nx_auth_creds.docker.container | default(False)) is truthy
+
+
+
+  - block:
+
+      - set_fact:
+          _tmp_test_creds_handled: true
+        delegate_to: localhost
+        become: no
+
+
+      - name: read current test cred password from docker compose service file
+        community.docker.docker_compose_v2_exec:
+          project_src: "{{ _iter_nx_auth_creds.docker.compose_dir }}"
+          service: "{{ _iter_nx_auth_creds.docker.compose_service }}"
+          argv:
+            - cat
+            - "{{ _iter_nx_auth_creds.path }}"
+        register: _tmp_pwfile_read
+        ignore_errors: >-
+          {{ _iter_nx_auth_creds.optional }}
+        changed_when: false
+        no_log: >-
+          {{ smabot_sonatype_nx_check_login_args_normed.hide_secrets }}
+
+
+      - set_fact:
+          _tmp_cur_test_creds:
+            user: "{{ _iter_nx_auth_creds.user }}"
+            password: >-
+              {{ _tmp_pwfile_read.stdout }}
+
+          ## clear secrets containing tmp vars
+          _tmp_pwfile_read:
+
+        delegate_to: localhost
+        become: no
+
+        when: >-
+          not (_tmp_pwfile_read.failed | default(False, True))
+        no_log: >-
+          {{ smabot_sonatype_nx_check_login_args_normed.hide_secrets }}
+
+    when: >-
+      (_iter_nx_auth_creds.docker.compose_dir | default(False)) is truthy
+
+
+  - block:
+
+      - set_fact:
+          _tmp_test_creds_handled: true
+        delegate_to: localhost
+        become: no
+
+
+      - name: read current test cred password from target filesystem
+        ansible.builtin.slurp:
+          src: "{{ _iter_nx_auth_creds.path }}"
+        register: _tmp_pwfile_read
+        changed_when: false
+        ignore_errors: >-
+          {{ _iter_nx_auth_creds.optional }}
+        no_log: >-
+          {{ smabot_sonatype_nx_check_login_args_normed.hide_secrets }}
+
+
+      - set_fact:
+          _tmp_cur_test_creds:
+            user: "{{ _iter_nx_auth_creds.user }}"
+            password: >-
+              {{ _tmp_pwfile_read['content'] | ansible.builtin.b64decode }}
+
+          ## clear secrets containing tmp vars
+          _tmp_pwfile_read:
+
+        delegate_to: localhost
+        become: no
+
+        when: >-
+          not (_tmp_pwfile_read.failed | default(False, True))
+        no_log: >-
+          {{ smabot_sonatype_nx_check_login_args_normed.hide_secrets }}
+
+    when: >-
+      (_iter_nx_auth_creds.docker | default(False)) is falsy
+
+
+  - block:
+
+     - ansible.builtin.debug:
+         msg: auto update initial admin password
+
+
+     - set_fact:
+         _tmp_new_pw: >-
+           {{ _iter_nx_auth_creds.auto_update.value }}
+       no_log: >-
+         {{ smabot_sonatype_nx_check_login_args_normed.hide_secrets }}
+       when: >-
+         (_iter_nx_auth_creds.auto_update.value | default(False)) is truthy
+
+
+     - name: auto-generate password
+       set_fact:
+         _tmp_new_pw: >-
+           {{ lookup('ansible.builtin.password', '/dev/null',
+               **(_iter_nx_auth_creds.auto_update.pwgen | default({
+                 'length': 40,
+               }, True))) }}
+       no_log: >-
+         {{ smabot_sonatype_nx_check_login_args_normed.hide_secrets }}
+       when: >-
+         (_iter_nx_auth_creds.auto_update.value | default(False)) is falsy
+
+
+     - name: update initial admin password by rest-api
+       smabot.sonatype.nexus_update_user_password:
+         api_username: "{{ _tmp_cur_test_creds.user }}"
+         api_password: "{{ _tmp_cur_test_creds.password }}"
+         user: "{{ _tmp_cur_test_creds.user }}"
+         password: "{{ _tmp_new_pw }}"
+
+
+     - set_fact:
+         _tmp_cur_test_creds: >-
+           {{ _tmp_cur_test_creds | ansible.builtin.combine({
+                'password': _tmp_new_pw,
+              }) }}
+       no_log: >-
+         {{ smabot_sonatype_nx_check_login_args_normed.hide_secrets }}
+
+    when: >-
+      (_iter_nx_auth_creds.auto_update | default(False)) is truthy
+

@@ -4,18 +4,19 @@
   - include_role:
       name: smabot.base.expand_vardirs
     when: >-
-      not (smabot_sonatype_manage_nexus_roles_and_privileges_args.skip_vardir_expand
+      not (smabot_sonatype_manage_nexus_blobstore_args.skip_vardir_expand
       | default(False) )
 
 
-  - smabot.sonatype.normalize_nexus_roles_and_privileges_manage_args:
+  - smabot.sonatype.normalize_nexus_blobstore_manage_args:
     register: _tmp_nexus_roles_cfg
     no_log: >-
-      {{ (smabot_sonatype_manage_nexus_roles_and_privileges_args.hide_secrets
+      {{ (smabot_sonatype_manage_nexus_blobstore_args.hide_secrets
        | default(True) ) != False }}
 
   - set_fact:
-      smabot_sonatype_manage_nexus_roles_and_privileges_args_normed: "{{ _tmp_nexus_roles_cfg.normalized }}"
+      smabot_sonatype_manage_nexus_blobstore_args_normed: >-
+        {{ _tmp_nexus_roles_cfg.normalized }}
     no_log: "{{ _tmp_nexus_roles_cfg.normalized.hide_secrets }}"
 
 
@@ -23,24 +24,25 @@
     set_fact:
       "{{ _iter_cred_vars.key }}": "{{ _iter_cred_vars.value }}"
     loop: >-
-      {{ smabot_sonatype_manage_nexus_roles_and_privileges_args_normed.connection._export_vars.ansible
+      {{ smabot_sonatype_manage_nexus_blobstore_args_normed.connection._export_vars.ansible
        | default({}, True) | dict2items() }}
     loop_control:
       loop_var: _iter_cred_vars
 
     ## might contain confidential server credentials and user secrets
     no_log: >-
-      {{ smabot_sonatype_manage_nexus_roles_and_privileges_args_normed.hide_secrets }}
+      {{ smabot_sonatype_manage_nexus_blobstore_args_normed.hide_secrets }}
 
 
-  - name: handle role sources
-    include_tasks: manage_role_sources.yml
+    ## manage blob stores by type
+  - name: handle blob stores
+    include_tasks: manage_blobstores.yml
     loop: >-
-      {{ smabot_sonatype_manage_nexus_roles_and_privileges_args_normed.roles.sources
+      {{ smabot_sonatype_manage_nexus_blobstore_args_normed.blobstores._export_cfgs.store_manage
        | dict2items }}
     loop_control:
-      loop_var: _iter_role_sources
-      label: "{{ _iter_role_sources.key }}"
+      loop_var: _iter_blobstore
+      label: "{{ _iter_blobstore.key }}"
 
 
     ## as these vars might contain highly valuable secrets it is a good
@@ -49,7 +51,7 @@
     set_fact:
       "{{ _iter_cred_vars.key }}":
     loop: >-
-      {{ smabot_sonatype_manage_nexus_roles_and_privileges_args_normed.connection._export_vars.ansible
+      {{ smabot_sonatype_manage_nexus_blobstore_args_normed.connection._export_vars.ansible
        | default({}, True) | dict2items() }}
     loop_control:
       loop_var: _iter_cred_vars

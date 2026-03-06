@@ -1,0 +1,275 @@
+---
+
+  - block:
+
+       ## this role supports vars.d
+      - include_role:
+          name: smabot.base.expand_vardirs
+
+
+      - smabot.sonatype.normalize_nexus_server_manage_args:
+        register: _tmp_nexus_users_cfg
+        no_log: >-
+          {{ (smabot_sonatype_manage_nexus_server_args.hide_secrets
+           | default(True) ) != False }}
+
+      - set_fact:
+          smabot_sonatype_nxsrv_manage_args_normed: "{{ _tmp_nexus_users_cfg.normalized }}"
+        no_log: "{{ _tmp_nexus_users_cfg.normalized.hide_secrets }}"
+
+
+      - name: set connection credentials when necessary
+        set_fact:
+          "{{ _iter_cred_vars.key }}": "{{ _iter_cred_vars.value }}"
+        loop: >-
+          {{ smabot_sonatype_nxsrv_manage_args_normed.connection._export_vars.ansible
+           | default({}, True) | dict2items() }}
+        loop_control:
+          loop_var: _iter_cred_vars
+
+        ## might contain confidential server credentials and user secrets
+        no_log: >-
+          {{ smabot_sonatype_nxsrv_manage_args_normed.hide_secrets }}
+
+    ## this is a pure api thing, so run it on the controller
+    delegate_to: localhost
+    become: no
+
+
+  - name: check server manage login credentials
+    include_role:
+      name: smabot.sonatype.nexus_check_login_creds
+    vars:
+      smabot_sonatype_nexus_check_login_creds_args: >-
+        {{ smabot_sonatype_nxsrv_manage_args_normed.check_login_creds }}
+    when: >-
+      (smabot_sonatype_nxsrv_manage_args_normed.check_login_creds
+       | default(False)) is truthy
+
+##  - ansible.builtin.debug:
+##      var: smabot_sonatype_nexus_check_login_creds_return
+
+
+  - block:
+
+      - name: update nexus auth credentials based on result of check login role
+        set_fact:
+          auth_user_sonanexus: >-
+            {{ smabot_sonatype_nexus_check_login_creds_return.auth_creds.user }}
+          auth_pw_sonanexus: >-
+            {{ smabot_sonatype_nexus_check_login_creds_return.auth_creds.password }}
+        no_log: >-
+          {{ smabot_sonatype_nxsrv_manage_args_normed.hide_secrets }}
+        when: >-
+          (smabot_sonatype_nexus_check_login_creds_return.auth_creds | default(False)) is truthy
+
+
+      - name: ensure initial nexus server setup is through
+        include_role:
+          name: smabot.sonatype.nexus_initial_setup
+        vars:
+          smabot_sonatype_nexus_initial_setup_args: >-
+            {{ smabot_sonatype_nxsrv_manage_args_normed.nexus_initial_setup }}
+
+
+      - name: update nexus auth credentials based on result of initial server setup
+        set_fact:
+          auth_user_sonanexus: >-
+            {{ smabot_sonatype_nexus_initial_setup_return.admin_credentials.user }}
+          auth_pw_sonanexus: >-
+            {{ smabot_sonatype_nexus_initial_setup_return.admin_credentials.password }}
+        no_log: >-
+          {{ smabot_sonatype_nxsrv_manage_args_normed.hide_secrets }}
+        when: >-
+          (smabot_sonatype_nexus_initial_setup_return.admin_credentials | default(False))
+          is truthy
+
+
+      - block:
+
+          - name: optionally manage product license
+            smabot.sonatype.nexus_manage_licence: >-
+              {{ smabot_sonatype_nxsrv_manage_args_normed.license.config }}
+            register: _tmp_modres_nx_srv_lic
+
+
+          - block:
+
+              - ansible.builtin.debug:
+                  msg: >-
+                    nexus server licence has changed, notify server restart listener
+                changed_when: true
+                notify: >-
+                  {{ smabot_sonatype_nxsrv_manage_args_normed.server_restart_notify }}
+                when: >-
+                  smabot_sonatype_nxsrv_manage_args_normed.server_restart_notify is truthy
+
+
+              - ansible.builtin.debug:
+                  msg: >-
+                    WARNING: did apply new nexus server licence, a server restart
+                    will probably be necessary, without it you might get
+                    strange errors when interacting with the rest api
+                    (at least with some endpoints)
+                when: >-
+                  smabot_sonatype_nxsrv_manage_args_normed.server_restart_notify is falsy
+
+
+              - name: ensure all triggered handlers are run before going on
+                ansible.builtin.meta: flush_handlers
+
+
+              - ansible.builtin.include_role:
+                  name: smabot.base.wait_until_webservice_ready
+                vars:
+                  smabot_base_wait_until_webservice_ready_args: >-
+                    {{ smabot_sonatype_nxsrv_manage_args_normed.wait_server_ready }}
+
+            when: _tmp_modres_nx_srv_lic.changed | default(False)
+
+        when: >-
+          smabot_sonatype_nxsrv_manage_args_normed.license.enabled
+          | default(False)
+
+
+        ##
+        ## note: this one will always only do blobstore creates / updates,
+        ##   never any removes (explicit or implicit because of exclusive),
+        ##   why this is done so see comment for 2nd blobstore config
+        ##   call below
+        ##
+      - name: optionally handle nexus blobstores (no removes)
+        include_role:
+          name: smabot.sonatype.manage_nexus_blobstores
+        vars:
+          smabot_sonatype_manage_nexus_blobstore_args: >-
+            {{ smabot_sonatype_nxsrv_manage_args_normed._export_cfgs.blobstores_no_removes }}
+        when: >-
+          (smabot_sonatype_nxsrv_manage_args_normed._export_cfgs.blobstores_no_removes
+           | default(False)) is truthy
+
+
+        ##
+        ## if given config has no blobstore removes defined it is fine to
+        ## run blobstore config only once, but obviously before handling
+        ## repos
+        ##
+      - name: optionally handle nexus blobstores config
+        include_role:
+          name: smabot.sonatype.manage_nexus_blobstores
+        vars:
+          smabot_sonatype_manage_nexus_blobstore_args: >-
+            {{ smabot_sonatype_nxsrv_manage_args_normed.blobstores }}
+        when: >-
+          (smabot_sonatype_nxsrv_manage_args_normed.blobstores
+           | default(False)) is truthy
+          and (smabot_sonatype_nxsrv_manage_args_normed._export_cfgs.blobstores_no_removes
+           | default(False)) is falsy
+
+
+        ##
+        ## cleanup pol rest-api is at the time of this writing (early 2026)
+        ## a bit buggy in a very strange way, doing this on a newly
+        ## setup server gives us a strange 404 error, but the 2nd rerun
+        ## works and every after that it works fine, we have no idea yet
+        ## why this fails originally and how it is fixed than magically
+        ## later, so far we can only say what does NOT do the trick:
+        ##
+        ##   -> completing nexus initial setup
+        ##   -> restarting the server
+        ##   -> combination of both
+        ##
+        ## update: we did find the truth behind the mysterie, or at
+        ##   least we exactly know how to avoid this behaviour:
+        ##
+        ##     -> apply a professional product licence than do a
+        ##        server restart
+        ##
+        ## note: I can totally understand that applying a licence needs a
+        ##   server restart for one or another reason, what I dont get is
+        ##   the connection between licence and this role,
+        ##   cleanup-policies are also part of the open source base
+        ##   variant, are they not, so just reading which policy exists
+        ##   should not give a 404 for an unlicenced server instance???
+        ##
+      - name: optionally handle nexus cleanup policies
+        include_role:
+          name: smabot.sonatype.manage_nexus_cleanup_policies
+        vars:
+          smabot_sonatype_manage_nexus_cleanup_policy_args: >-
+            {{ smabot_sonatype_nxsrv_manage_args_normed.cleanup_policies }}
+        when: >-
+          (smabot_sonatype_nxsrv_manage_args_normed.cleanup_policies
+           | default(False)) is truthy
+
+
+      - name: optionally handle nexus repositories
+        include_role:
+          name: smabot.sonatype.manage_nexus_repositories
+        vars:
+          smabot_sonatype_manage_nexus_repository_args: >-
+            {{ smabot_sonatype_nxsrv_manage_args_normed.repositories }}
+        when: >-
+          (smabot_sonatype_nxsrv_manage_args_normed.repositories
+           | default(False)) is truthy
+ 
+ 
+      ##
+      ## note: the reason we do this a 2nd time here with potential
+      ##   blobstore removes is to circumvent a cyclical dependency
+      ##   like issue with nexus repositories, because:
+      ##
+      ##     Case A: creating repos obviously needs a pre existing blobstore             >>  blobstore -> repo
+      ##     Case B: when removing a blobstore all repos using it must be removed first  >>  repo -> blobstore
+      ##
+      - name: optionally redo nexus blobstores config (including removes)
+        include_role:
+          name: smabot.sonatype.manage_nexus_blobstores
+        vars:
+          smabot_sonatype_manage_nexus_blobstore_args: >-
+            {{ smabot_sonatype_nxsrv_manage_args_normed.blobstores }}
+        when: >-
+          (smabot_sonatype_nxsrv_manage_args_normed.blobstores
+           | default(False)) is truthy
+          and (smabot_sonatype_nxsrv_manage_args_normed._export_cfgs.blobstores_no_removes
+           | default(False)) is truthy
+ 
+ 
+      - name: optionally handle roles and privileges
+        include_role:
+          name: smabot.sonatype.manage_nexus_roles_and_privileges
+        vars:
+          smabot_sonatype_manage_nexus_roles_and_privileges_args: >-
+            {{ smabot_sonatype_nxsrv_manage_args_normed.roles_and_privileges }}
+        when: >-
+          (smabot_sonatype_nxsrv_manage_args_normed.roles_and_privileges
+           | default(False)) is truthy
+ 
+ 
+      - name: optionally handle nexus users
+        include_role:
+          name: smabot.sonatype.manage_nexus_users
+        vars:
+          smabot_sonatype_manage_nexus_users_args: >-
+            {{ smabot_sonatype_nxsrv_manage_args_normed.users }}
+        when: >-
+          (smabot_sonatype_nxsrv_manage_args_normed.users | default(False))
+           is truthy
+
+
+        ## as these vars might contain highly valuable secrets it is a good
+        ## idea to unset them after they are dont needed anymore
+      - name: unset connection credentials when necessary
+        set_fact:
+          "{{ _iter_cred_vars.key }}":
+        loop: >-
+          {{ smabot_sonatype_nxsrv_manage_args_normed.connection._export_vars.ansible
+           | default({}, True) | dict2items() }}
+        loop_control:
+          loop_var: _iter_cred_vars
+          label: "{{ _iter_cred_vars.key }}"
+
+    ## this is a pure api thing, so run it on the controller
+    delegate_to: localhost
+    become: no
+

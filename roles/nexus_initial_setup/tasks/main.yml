@@ -1,0 +1,139 @@
+---
+
+   ## this role supports vars.d
+  - include_role:
+      name: smabot.base.expand_vardirs
+    when: >-
+      not (smabot_sonatype_nexus_initial_setup_args.skip_vardir_expand
+      | default(False) )
+
+
+  - smabot.sonatype.normalize_nexus_intial_setup_args:
+    register: _tmp_nexus_cfg
+    no_log: >-
+      {{ (smabot_sonatype_nexus_initial_setup_args.hide_secrets
+       | default(True) ) != False }}
+
+  - set_fact:
+      smabot_sonatype_nexus_initial_setup_args_normed: >-
+        {{ _tmp_nexus_cfg.normalized }}
+    no_log: "{{ _tmp_nexus_cfg.normalized.hide_secrets }}"
+
+
+  - name: set connection credentials when necessary
+    set_fact:
+      "{{ _iter_cred_vars.key }}": "{{ _iter_cred_vars.value }}"
+    loop: >-
+      {{ smabot_sonatype_nexus_initial_setup_args_normed.connection._export_vars.ansible
+       | default({}, True) | dict2items() }}
+    loop_control:
+      loop_var: _iter_cred_vars
+
+    ## might contain confidential server credentials and user secrets
+    no_log: >-
+      {{ smabot_sonatype_nexus_initial_setup_args_normed.hide_secrets }}
+
+
+  - set_fact:
+      _tmp_modargs: >-
+         {{ smabot_sonatype_nexus_initial_setup_args_normed.initial_setup.config }}
+    no_log: >-
+      {{ smabot_sonatype_nexus_initial_setup_args_normed.hide_secrets }}
+
+
+  - block:
+
+      - name: auto-generate password
+        set_fact:
+          _tmp_new_pw: >-
+            {{ lookup('ansible.builtin.password', '/dev/null',
+                **smabot_sonatype_nexus_initial_setup_args_normed.initial_setup.pw_gen
+                ) }}
+        no_log: >-
+          {{ smabot_sonatype_nexus_initial_setup_args_normed.hide_secrets }}
+
+      - set_fact:
+          _tmp_modargs: >-
+             {{ _tmp_modargs | ansible.builtin.combine({
+                  'admin_password': _tmp_new_pw,
+                })
+             }}
+        no_log: >-
+          {{ smabot_sonatype_nexus_initial_setup_args_normed.hide_secrets }}
+
+    when: >-
+      not smabot_sonatype_nexus_initial_setup_args_normed.initial_setup.password_preset
+
+
+    ##
+    ## this basically does what the initial login wizard does,
+    ## skipping this interactive server setup part
+    ##
+  - name: handle initial nexus server setup
+    smabot.sonatype.nexus_initial_setup: "{{ _tmp_modargs }}"
+    register: _tmp_init_setup_modres
+    no_log: >-
+      {{ smabot_sonatype_nexus_initial_setup_args_normed.hide_secrets }}
+
+
+  - block:
+
+      - ansible.builtin.debug:
+          msg: >-
+            did initial nexus server setup, notify server restart listener
+        changed_when: true
+        notify: "{{ smabot_sonatype_nexus_initial_setup_args_normed.server_restart_notify }}"
+        when: >-
+          smabot_sonatype_nexus_initial_setup_args_normed.server_restart_notify is truthy
+
+
+      ## note: not sure, if what the warning says is actually true
+      ##- ansible.builtin.debug:
+      ##    msg: >-
+      ##      WARNING: did initial nexus server setup, a server restart
+      ##      will probably be necessary, without it you will likely get
+      ##      strange errors when interacting with the rest api
+      ##      (at least with some endpoints)
+      ##  when: >-
+      ##    smabot_sonatype_nexus_initial_setup_args_normed.server_restart_notify is falsy
+
+
+      - name: ensure all triggered handlers are run before going on
+        ansible.builtin.meta: flush_handlers
+
+
+      - ansible.builtin.include_role:
+          name: smabot.base.wait_until_webservice_ready
+        vars:
+          smabot_base_wait_until_webservice_ready_args: >-
+            {{ smabot_sonatype_nexus_initial_setup_args_normed.wait_server_ready }}
+
+    when: >-
+      _tmp_init_setup_modres.changed | default(False)
+
+
+  - name: export role results
+    set_fact:
+      smabot_sonatype_nexus_initial_setup_return: >-
+        {{ _tmp_init_setup_modres }}
+
+      ## also unset secure sensible tmp vars
+      _tmp_new_pw:
+      _tmp_modargs:
+      _tmp_init_setup_modres:
+    no_log: >-
+      {{ smabot_sonatype_nexus_initial_setup_args_normed.hide_secrets }}
+
+
+    ## as these vars might contain highly valuable secrets it is a good
+    ## idea to unset them after they are dont needed anymore
+  - name: unset connection credentials when necessary
+    set_fact:
+      "{{ _iter_cred_vars.key }}":
+    loop: >-
+      {{ smabot_sonatype_nexus_initial_setup_args_normed.connection._export_vars.ansible
+       | default({}, True) | dict2items() }}
+    loop_control:
+      loop_var: _iter_cred_vars
+      label: "{{ _iter_cred_vars.key }}"
+
